@@ -12,6 +12,7 @@ import playCommand from "./commands/fun/play.js";
 import pollCommand from "./commands/fun/poll.js";
 import pingCommand from "./commands/fun/ping.js";
 import { getAllChannels } from "./supabase/supabase.js";
+import { getAllContext } from "../scripts/create-context.js";
 
 dotenv.config();
 
@@ -36,7 +37,12 @@ const openAI = new OpenAI({
 // Initialize Supabase and get the bot token and prefix, and emojis
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const BOT_PREFIX = process.env.PREFIX;
-const loveEmojis = ["🥰", "😍", "😘", "❤"];
+const DEFAULT_SYSTEM_MESSAGE = process.env.DEFAULT_SYSTEM_MESSAGE;
+const loveEmojis = ["🥰", "😍", "😘", "❤", "💖", "💕", "😻"];
+const dislikeEmojis = ["😒", "🙄", "😕", "😠", "👎", "😡", "😤", "😣"];
+const pray = "🙏";
+
+const chatContext = await getAllContext();
 
 client.on("ready", () => {
   console.log(`Bot is ready as: ${client.user.tag}`);
@@ -64,12 +70,32 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 client.on("messageCreate", async (message) => {
-  //Meme reaction for testing -> For Aaron ❤
-  const randomLoveEmoji =
-    loveEmojis[Math.floor(Math.random() * loveEmojis.length)];
-  if (message.content.toLowerCase().includes("pex".toLowerCase())) {
-    message.react(randomLoveEmoji);
+  //Meme reactions
+  const randomLoveEmoji = loveEmojis[Math.floor(Math.random() * loveEmojis.length)];
+  const randomDislikeEmoji = dislikeEmojis[Math.floor(Math.random() * dislikeEmojis.length)];
+  if (message.content.toLowerCase().includes("pex".toLowerCase()) && !message.author.bot) {
+    setTimeout(() => {
+      message.react(randomLoveEmoji);
+    }, 5000);
   }
+  if ((message.content.toLowerCase().includes("allah".toLowerCase()) 
+      || message.content.toLowerCase().includes("jesus".toLowerCase())
+      || message.content.toLowerCase().includes("prayge".toLowerCase()))
+      && !message.author.bot) {
+      setTimeout(() => {
+        message.react(pray);
+      }, 5000);
+    }
+
+    if(((message.content.includes("OW")
+      || message.content.toLowerCase().includes("overwatch".toLowerCase())
+      || message.content.toLowerCase().includes("valorant".toLowerCase()))
+      && !message.author.bot)){
+      setTimeout(() => {
+        message.react(randomDislikeEmoji);
+      }, 5000);
+    }
+  
   //Doesn't respond on group pings
   if (message.content.includes('@everyone') || message.content.includes('@here')) {
     return;
@@ -85,12 +111,16 @@ client.on("messageCreate", async (message) => {
   }, 15000);
 
   let conversation = [];
-  conversation.push({
-    role: "system",
-    content: process.env.MODEL_SYSTEM_MESSAGE,
+  if(message.guild.id === process.env.GUILD_BZ){
+    chatContext.forEach((message) => {
+      if(message.content === null) return;
+      conversation.push({role: message.role, content: message.content});
+    });
+  }else{
+    conversation.push({role: "system", content: DEFAULT_SYSTEM_MESSAGE});
+  }
 
-  });
-  let previousMessage = await message.channel.messages.fetch({ limit: 30 });
+  let previousMessage = await message.channel.messages.fetch({ limit: 40 });
 
   previousMessage.reverse().forEach((message) => {
     if (message.author.bot && message.author.id != client.id) return;
@@ -110,30 +140,24 @@ client.on("messageCreate", async (message) => {
   });
   clearInterval(sendTypingInterval);
   const response = await openAI.chat.completions
-    .create({
-      model: "gpt-4o",
-      messages: [
-        {
-          //name
-          role: "system",
-          content: process.env.MODEL_SYSTEM_MESSAGE,
-        },
-        {
-          //name
-          role: "user",
-          content: message.content,
-        },
-      ],
-      temperature: 1,
-      max_tokens: 2048,
-      top_p: 0.42,
-      frequency_penalty: 0.39,
-      presence_penalty: 0,
-    })
-    .catch((error) => {
-      message.reply("ERROR on OPENAIs end.");
-      console.log("OpenAI Error:\n", error);
-    });
+      .create({
+        model: "gpt-4o",
+        messages: [
+          //primes the model with the context
+          ...conversation,
+          //user messages
+          { role: "user", content: message.content},
+        ],
+        temperature: 1.0,
+        max_tokens: 500,
+        top_p: 1,
+        frequency_penalty: 0.5,
+        presence_penalty: 0,
+      })
+      .catch((error) => {
+        message.reply("ERROR on OPENAIs end.");
+        console.log("OpenAI Error:\n", error);
+      });
   clearInterval(sendTypingInterval);
 
   if (!response) {
